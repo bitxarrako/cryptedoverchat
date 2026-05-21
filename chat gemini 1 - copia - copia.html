@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Generador de Hash + Cifrado Mensajes</title>
+<style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; color: #333; }
+    h2 { border-bottom: 2px solid #0078d4; padding-bottom: 10px; color: #0078d4; }
+    h3 { margin-top: 25px; color: #555; }
+    textarea { width: 100%; height: 100px; font-family: monospace; box-sizing: border-box; resize: vertical; padding: 8px; }
+    input, button { padding: 10px; margin: 6px 0; width: 100%; box-sizing: border-box; font-size: 14px; }
+    button { background-color: #0078d4; color: white; border: none; cursor: pointer; font-weight: bold; border-radius: 4px; }
+    button:hover { background-color: #005a9e; }
+    .secondary-btn { background-color: #f3f2f1; color: #333; border: 1px solid #8a8886; }
+    .secondary-btn:hover { background-color: #edebe9; }
+    .zone { background: #f8f9fa; border: 1px solid #e1e1e1; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
+    .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<h2>Cifrado de Mensajes con Hash + PIN</h2>
+
+<!-- ================= VISTA DEL EMISOR ================= -->
+<div id="emisorZone" class="zone">
+  <h2>A) Modo Emisor (Crear nuevo Hash)</h2>
+  <p style="font-size: 13px; color: #666;">Introduce un PIN. El sistema copiará el hash automáticamente en tu portapapeles y desbloqueará el panel de cifrado.</p>
+  <label for="generatorPin">Introduce el PIN deseado (3 a 15 caracteres):</label>
+  <input type="password" id="generatorPin" placeholder="Escribe el PIN secreto aquí">
+  <button onclick="generateHashAndUnlock()">Generar Hash, copiar y empezar a cifrar</button>
+</div>
+
+<!-- ================= VISTA DEL RECEPTOR ================= -->
+<div id="receptorZone" class="zone">
+  <h2>B) Modo Receptor / Cifrado Activo</h2>
+  
+  <!-- Bloque de Autenticación (Pasos 1 y 2) -->
+  <div id="authBlock">
+    <div id="stepHash">
+      <h3>Paso 1: Pega el hash recibido</h3>
+      <input type="text" id="hashInput" placeholder="Hash SHA-256 en HEX (64 caracteres)">
+      <button onclick="loadHash()">Usar este hash</button>
+    </div>
+
+    <div id="stepPin" class="hidden">
+      <h3>Paso 2: Introduce el PIN para desbloquear</h3>
+      <input type="password" id="pinInput" placeholder="PIN">
+      <button onclick="checkPin()">Validar PIN</button>
+    </div>
+  </div>
+
+  <!-- Bloque de la Aplicación (Paso 3) -->
+  <div id="app" class="hidden">
+    <h3>Paso 3: Cifrar / Descifrar mensaje</h3>
+
+    <label for="plaintext">Texto en claro (Mensaje Real):</label>
+    <textarea id="plaintext"></textarea>
+
+    <button onclick="encrypt()">1. Cifrar Mensaje</button>
+
+    <label for="ciphertext" style="margin-top: 15px; display: block;">Texto cifrado (JSON para enviar por Teams):</label>
+    <textarea id="ciphertext"></textarea>
+
+    <button onclick="decrypt()" class="secondary-btn">2. Descifrar Mensaje recibido</button>
+  </div>
+</div>
+
+<script>
+let STORED_HASH_HEX = null;
+let CURRENT_PIN = null;
+
+function bufferToHex(buffer) {
+    const bytes = new Uint8Array(buffer);
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+// Convertir de forma segura para textos masivos
+function uint8ToBase64(uint8Array) {
+    return btoa(uint8Array.reduce((data, byte) => data + String.fromCharCode(byte), ''));
+}
+
+function base64ToUint8(base64String) {
+    return Uint8Array.from(atob(base64String), c => c.charCodeAt(0));
+}
+
+async function sha256Hex(text) {
+    const enc = new TextEncoder();
+    const data = enc.encode(text);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    return bufferToHex(hash);
+}
+
+// --- NUEVO FLUJO INTEGRADO PARA EL EMISOR ---
+async function generateHashAndUnlock() {
+    const pin = document.getElementById("generatorPin").value.trim();
+    if (pin.length < 3 || pin.length > 15) {
+        alert("El PIN debe tener entre 3 y 15 caracteres.");
+        return;
+    }
+    
+    try {
+        // 1. Generamos el hash
+        const hashHex = await sha256Hex(pin);
+        
+        // 2. Lo copiamos silenciosamente al portapapeles (sin alert)
+        await navigator.clipboard.writeText(hashHex);
+        
+        // 3. Establecemos el PIN activo internamente para poder encriptar
+        CURRENT_PIN = pin;
+        
+        // 4. Modificamos la interfaz: Ocultamos emisor y autenticación, abrimos Paso 3 directamente
+        document.getElementById("emisorZone").classList.add("hidden");
+        document.getElementById("authBlock").classList.add("hidden");
+        document.getElementById("app").classList.remove("hidden");
+        
+    } catch (err) {
+        alert("Error al interactuar con el portapapeles de tu navegador.");
+    }
+}
+
+// Paso 1: Cargar hash (Para cuando actúas como Receptor)
+function loadHash() {
+    const h = document.getElementById("hashInput").value.trim().toUpperCase();
+    if (!/^[0-9A-F]{64}$/.test(h)) {
+        alert("El hash debe ser SHA-256 en HEX exacto (64 caracteres).");
+        return;
+    }
+    STORED_HASH_HEX = h;
+    document.getElementById("stepHash").classList.add("hidden");
+    document.getElementById("stepPin").classList.remove("hidden");
+}
+
+// Paso 2: Validar PIN (Para cuando actúas como Receptor)
+async function checkPin() {
+    const pin = document.getElementById("pinInput").value.trim();
+    if (pin.length < 3 || pin.length > 15) {
+        alert("El PIN debe tener entre 3 y 15 caracteres.");
+        return;
+    }
+
+    const hash = await sha256Hex(pin);
+    if (hash !== STORED_HASH_HEX) {
+        alert("PIN incorrecto para este hash.");
+        return;
+    }
+
+    CURRENT_PIN = pin;
+    
+    // Ocultar zonas de autenticación y revelar panel de cifrado limpiamente
+    document.getElementById("emisorZone").classList.add("hidden");
+    document.getElementById("authBlock").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+}
+
+// Derivar clave AES-GCM
+async function deriveKeyFromPin(pin) {
+    const enc = new TextEncoder();
+    const hash = await crypto.subtle.digest("SHA-256", enc.encode(pin));
+    return crypto.subtle.importKey(
+        "raw",
+        hash,
+        { name: "AES-GCM" },
+        false,
+        ["encrypt", "decrypt"]
+    );
+}
+
+// Cifrar
+async function encrypt() {
+    if (!CURRENT_PIN) return;
+    const plaintext = document.getElementById("plaintext").value;
+    const key = await deriveKeyFromPin(CURRENT_PIN);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    const enc = new TextEncoder();
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        enc.encode(plaintext)
+    );
+
+    const out = {
+        iv: uint8ToBase64(iv),
+        data: uint8ToBase64(new Uint8Array(ciphertext))
+    };
+
+    document.getElementById("ciphertext").value = JSON.stringify(out);
+}
+
+// Descifrar
+async function decrypt() {
+    if (!CURRENT_PIN) return;
+
+    let obj;
+    try {
+        obj = JSON.parse(document.getElementById("ciphertext").value);
+    } catch (e) {
+        alert("El texto cifrado introducido no es un JSON válido.");
+        return;
+    }
+
+    if (!obj.iv || !obj.data) {
+        alert("El JSON no tiene el formato correcto.");
+        return;
+    }
+
+    try {
+        const iv = base64ToUint8(obj.iv);
+        const data = base64ToUint8(obj.data);
+        const key = await deriveKeyFromPin(CURRENT_PIN);
+
+        const decrypted = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: iv },
+            key,
+            data
+        );
+        const dec = new TextDecoder();
+        document.getElementById("plaintext").value = dec.decode(decrypted);
+    } catch (e) {
+        alert("Error al descifrar: Datos corruptos o clave inválida.");
+    }
+}
+</script>
+
+</body>
+</html>

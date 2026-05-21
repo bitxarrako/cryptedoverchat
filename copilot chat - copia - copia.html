@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mensajes cifrados</title>
+
+<style>
+body {
+    font-family: "Segoe UI", Arial;
+    background: #0f172a;
+    color: #e2e8f0;
+    display: flex;
+    justify-content: center;
+    padding: 40px;
+}
+.card {
+    background: #1e293b;
+    padding: 25px;
+    border-radius: 12px;
+    width: 520px;
+    box-shadow: 0 0 25px rgba(0,0,0,0.4);
+    animation: fadeIn .4s ease;
+}
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+h2, h3 { color: #38bdf8; }
+input, textarea {
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    border-radius: 8px;
+    border: none;
+    background: #334155;
+    color: #e2e8f0;
+}
+textarea {
+    height: 220px;
+    resize: vertical;
+}
+button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 12px;
+    border: none;
+    border-radius: 8px;
+    background: #38bdf8;
+    color: #0f172a;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.2s;
+}
+button:hover {
+    background: #0ea5e9;
+}
+.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="card">
+
+<h2>Mensajes cifrados</h2>
+
+<!-- BLOQUE HASH + PIN -->
+<div id="authBlock">
+    <h3>Hash SHA‑256</h3>
+    <input type="text" id="hashInput" placeholder="Pega o genera el hash">
+
+    <h3>PIN</h3>
+    <input type="password" id="pinInput" placeholder="Introduce PIN (3 a 15 caracteres)">
+    <button onclick="processInputs()">Continuar</button>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+    <h3>Cifrar / Descifrar</h3>
+
+    <label>Texto a cifrar:</label>
+    <textarea id="plaintext"></textarea>
+
+    <button onclick="encrypt()">Cifrar</button>
+
+    <label>Texto cifrado:</label>
+    <textarea id="ciphertext"></textarea>
+
+    <button onclick="decrypt()">Descifrar</button>
+</div>
+
+</div>
+
+<script>
+let STORED_HASH_HEX = null;
+let CURRENT_PIN = null;
+
+// Convertir ArrayBuffer a HEX
+function bufferToHex(buffer) {
+    const bytes = new Uint8Array(buffer);
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+// SHA-256 en HEX
+async function sha256Hex(text) {
+    const enc = new TextEncoder();
+    const data = enc.encode(text);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    return bufferToHex(hash);
+}
+
+// Lógica principal
+async function processInputs() {
+    const hash = document.getElementById("hashInput").value.trim().toUpperCase();
+    const pin = document.getElementById("pinInput").value.trim();
+
+    if (pin.length < 3 || pin.length > 15) return;
+
+    // Caso 1: PIN sin hash → generar hash y pasar directo
+    if (hash === "") {
+        const generatedHash = await sha256Hex(pin);
+        STORED_HASH_HEX = generatedHash;
+        CURRENT_PIN = pin;
+
+        document.getElementById("hashInput").value = generatedHash;
+
+        try { await navigator.clipboard.writeText(generatedHash); } catch {}
+
+        document.getElementById("authBlock").classList.add("hidden");
+        document.getElementById("app").classList.remove("hidden");
+        return;
+    }
+
+    // Caso 2: Hash introducido → validar formato
+    if (!/^[0-9A-F]{64}$/.test(hash)) return;
+
+    const pinHash = await sha256Hex(pin);
+
+    if (pinHash !== hash) return;
+
+    STORED_HASH_HEX = hash;
+    CURRENT_PIN = pin;
+
+    document.getElementById("authBlock").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+}
+
+// Derivar clave AES desde el PIN
+async function deriveKeyFromPin(pin) {
+    const enc = new TextEncoder();
+    const hash = await crypto.subtle.digest("SHA-256", enc.encode(pin));
+    return crypto.subtle.importKey(
+        "raw",
+        hash,
+        { name: "AES-GCM" },
+        false,
+        ["encrypt", "decrypt"]
+    );
+}
+
+// Cifrar
+async function encrypt() {
+    const plaintext = document.getElementById("plaintext").value;
+    const key = await deriveKeyFromPin(CURRENT_PIN);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    const enc = new TextEncoder();
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        enc.encode(plaintext)
+    );
+
+    const out = {
+        iv: btoa(String.fromCharCode(...iv)),
+        data: btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
+    };
+
+    document.getElementById("ciphertext").value = JSON.stringify(out, null, 2);
+}
+
+// Descifrar
+async function decrypt() {
+    let obj;
+    try {
+        obj = JSON.parse(document.getElementById("ciphertext").value);
+    } catch { return; }
+
+    const iv = Uint8Array.from(atob(obj.iv), c => c.charCodeAt(0));
+    const data = Uint8Array.from(atob(obj.data), c => c.charCodeAt(0));
+
+    const key = await deriveKeyFromPin(CURRENT_PIN);
+
+    try {
+        const decrypted = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: iv },
+            key,
+            data
+        );
+        const dec = new TextDecoder();
+        document.getElementById("plaintext").value = dec.decode(decrypted);
+    } catch {}
+}
+</script>
+
+</body>
+</html>
