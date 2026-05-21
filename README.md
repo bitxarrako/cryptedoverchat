@@ -1,6 +1,6 @@
 # Chat cifrado offline en HTML
 
-Este proyecto contiene dos herramientas HTML que permiten intercambiar mensajes cifrados usando un PIN compartido. No dependen de servidores ni instalaciones: todo ocurre localmente en el navegador.
+Este proyecto contiene dos versiones de una herramienta HTML que permite intercambiar mensajes cifrados usando un PIN pre-compartido. No depende de servidores ni instalaciones para su utilización: todo ocurre localmente en el navegador.
 
 ## ¿Para qué sirve?
 
@@ -8,7 +8,7 @@ Permite enviar mensajes privados por cualquier medio (Telegram, correo, WhatsApp
 
 ## Cómo funciona
 
-1. Ambos usuarios acuerdan un **PIN**.
+1. Ambos usuarios acuerdan un **PIN** de entre 3 y 15 caracteres.
 2. Cada uno introduce el PIN en su HTML y genera un **hash** para verificar que coinciden.
 3. Una vez verificado, se habilita el área de cifrado.
 4. Escribes un mensaje y el HTML genera un **código cifrado**.
